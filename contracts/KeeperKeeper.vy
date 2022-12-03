@@ -13,14 +13,18 @@
 
 # external interfaces
 interface IERC677:
+    # TODO: ref
     def balanceOf(_owner: address) -> uint256: view
-    def transferAndCall(_to: address, _value: uint256, _data: Bytes[388]) -> bool: nonpayable
+    def transferAndCall(
+        _to: address, _value: uint256, _data: Bytes[388]
+    ) -> bool: nonpayable
 
 interface IAutomationRegistry:
-    # https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/interfaces/AutomationRegistryInterface1_3.sol
+    # @chainlink/v0.8/interfaces/AutomationRegistryInterface1_3.sol
     def getState() -> (State, Config, address[1]): view
 
 interface IKeeperRegistrar:
+    # @chainlink/v0.8/KeeperRegistrar.sol
     def register(
         name: String[64],
         encryptedEmail: bytes32,
@@ -32,6 +36,13 @@ interface IKeeperRegistrar:
         source: uint8,
         sender: address
     ) -> uint256: nonpayable
+    def getRegistrationConfig() -> (
+        AutoApproveType, uint32, uint32, address, uint256
+    ): view
+
+interface IEACAggregatorProxy:
+    # TODO: ref
+    def latestRoundData() -> (uint80, int256, uint256, uint256, uint80): view
 
 
 # structs
@@ -56,6 +67,13 @@ struct State:  # IAutomationRegistry
     numUpkeeps: uint256
 
 
+# enums
+enum AutoApproveType:  # IKeeperRegistrar
+    DISABLED
+    ENABLED_SENDER_ALLOWLIST
+    ENABLED_ALL
+
+
 # events
 event LinkSwappedIn:
     amount: uint256
@@ -65,18 +83,24 @@ event LinkSwappedOut:
 
 
 # constants
+MAX_BPS: constant(uint256) = 1_000_000_000
 MAX_SWARM_SIZE: constant(uint8) = 16
-GAS_LIMIT: constant(uint32) = 1_000_000
-LINK_THRESHOLD: constant(uint256) = as_wei_value(5, "ether")
+SELF_UPKEEP_GAS: constant(uint32) = 1_000_000  # TODO: replace, still an estimation
 
 LINK: constant(address) = 0x514910771AF9Ca656af840dff83E8264EcF986CA
 CL_REGISTRY: constant(address) = 0x02777053d6764996e594c3E88AF1D58D5363a2e6
 CL_REGISTRAR: constant(address) = 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
 UNIV3_ROUTER: constant(address) = 0xE592427A0AEce92De3Edee1F18E0157C05861564
-FASTGAS_ORACLE: constant(address) =0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C
+FASTGAS_ORACLE: constant(address) = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C
+LINKETH_ORACLE: constant(address) = 0xDC530D9457755926550b59e8ECcdaE7624181557
+
 
 # storage vars
 swarm: public(uint32[MAX_SWARM_SIZE])
+premium: public(uint32)
+gas_factor: public(uint16)
+max_gas: public(uint32)
+min_link: public(uint256)
 
 
 @payable
@@ -85,26 +109,64 @@ def __init__():
     """
     @notice Contract constructor
     """
+    self._refresh_registry_config_and_get_nonce()
+    self._refresh_registrar_config()
+
+
+@internal
+def _register_self():
+    # buy more $link if there is not enough for initial funding of the upkeep
     if not self._enough_link():
         self._swap_link_in()
-    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", GAS_LIMIT)
 
-    # add new upkeep id to swarm
+    # add upkeep entry in chainlink's registry
+    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
+
+    # add new upkeep id to our swarm
     self.swarm[0] = upkeep_id
+
+
+@internal
+def _refresh_registry_config_and_get_nonce() -> uint32:
+    state: State = empty(State)
+    config: Config = empty(Config)
+    _a: address[1] = empty(address[1])
+    state, config, _a = IAutomationRegistry(CL_REGISTRY).getState()
+
+    self.premium = config.paymentPremiumPPB
+    self.gas_factor = config.gasCeilingMultiplier
+    self.max_gas = config.maxPerformGas
+
+    return state.nonce
+
+
+@internal
+def _refresh_registrar_config():
+    self.min_link = IKeeperRegistrar(
+        0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+    ).getRegistrationConfig()[4]
+
 
 
 @internal
 def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint32:
     """
     @notice Register an upkeep on the automation registrar and predict its id
-    @params member Address of the member to register in the swarm
-    @params name Name of the upkeep
-    @params gas_limit Max gas that the member's performUpkeep will need
     @dev https://docs.chain.link/chainlink-automation/register-upkeep/
+    @param member Address of the member to register in the swarm
+    @param name Name of the upkeep
+    @param gas_limit Max gas that the member's performUpkeep will need
+    @return The id of the newly registered upkeep
     """
-    # get old nonce from registry
+    # get old nonce from registry to compare against new nonce later
     state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
     old_nonce: uint32 = state.nonce
+
+    # confirm gas costs for member's performUpkeep are not too high
+    assert gas_limit <= self.max_gas
+
+    # calc amount of $link needed to fund upkeep
+    link_threshold: uint256 = self._link_threshold(convert(gas_limit, int256))
 
     # build registration payload and send to registrar via erc677
     payload: Bytes[388] = _abi_encode(
@@ -114,18 +176,17 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
         gas_limit,
         self,
         empty(bytes32),
-        convert(LINK_THRESHOLD, uint256),#self._threshold(),
+        link_threshold,
         empty(uint256),
         self,
-        method_id=0x3659d666  # method_id("register(String[64],bytes32,address,uint32,address,bytes32,uint96,uint8,address)")
+        method_id=0x3659d666
     )
-    IERC677(LINK).transferAndCall(CL_REGISTRAR, LINK_THRESHOLD, payload)
+    IERC677(LINK).transferAndCall(CL_REGISTRAR, link_threshold, payload)
 
-    # get new nonce from registry
-    state = IAutomationRegistry(CL_REGISTRY).getState()[0]
-    new_nonce: uint32 = state.nonce
+    # get new nonce from registry and refresh its config in our storage
+    new_nonce: uint32 = self._refresh_registry_config_and_get_nonce()
     if not new_nonce == old_nonce + 1:
-        raise
+        raise  # upkeep was not successfully registered!
 
     # predict upkeep id
     upkeep_hash: bytes32 = keccak256(
@@ -146,20 +207,41 @@ def _enough_link() -> bool:
     """"
     Check if KeeperKeeper's $LINK's balance is above threshold
     """
-    if IERC677(LINK).balanceOf(self) >= LINK_THRESHOLD:#self._link_threshold():
+    if IERC677(LINK).balanceOf(self) >= self._link_threshold(convert(SELF_UPKEEP_GAS, int256)):
         return True
     return False
 
 
 @view
 @internal
-def _link_threshold() -> uint256:
+def _link_threshold(gas_per_upkeep: int256, n: int256 = 10) -> uint256:
     """
-    Minimum amount of $LINK needed for a single swarm member
+    @notice Minimal $LINK balance needed for a single swarm member to perform
+            at least n upkeeps
+    @dev https://docs.chain.link/chainlink-automation/automation-economics/
+    @param gas_per_upkeep Amount of gas a single call to performUpkeep costs
+    @param n Amount of times the performUpkeep should be able to be called
+             before needing a topup
+    @return Amount of $LINK in wei needed for n upkeeps in wei
     """
-    # TODO: calculate dynamically based on gas oracle
-    dynamic: uint256 = as_wei_value(100, "ether")
-    return max(dynamic, LINK_THRESHOLD)
+    max_bps: int256 = convert(MAX_BPS, int256)
+    premium: int256 = convert(self.premium, int256)
+    gas_price: int256 = IEACAggregatorProxy(FASTGAS_ORACLE).latestRoundData()[1]
+    link_rate: int256 = IEACAggregatorProxy(LINKETH_ORACLE).latestRoundData()[1]
+
+    ether_per_upkeep: int256 = gas_per_upkeep * gas_price
+    incl_premium: int256 = ether_per_upkeep * (max_bps + premium) / max_bps
+    incl_overhead: int256 = incl_premium + (80_000 * gas_price)
+    link_threshold_in_wei: int256 = incl_overhead * 10 ** 18 / link_rate
+
+    # assure upkeep can be performed n times
+    link_threshold_in_wei *= n
+
+    # make sure int256 is positive
+    assert link_threshold_in_wei > 0
+
+    # in either case make sure we use at least min_link as enforced by registrar
+    return max(convert(link_threshold_in_wei, uint256), self.min_link)
 
 
 @payable
