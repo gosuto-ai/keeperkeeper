@@ -66,12 +66,14 @@ event LinkSwappedOut:
 
 # constants
 MAX_SWARM_SIZE: constant(uint8) = 16
+GAS_LIMIT: constant(uint32) = 1_000_000
+LINK_THRESHOLD: constant(uint256) = as_wei_value(5, "ether")
 
 LINK: constant(address) = 0x514910771AF9Ca656af840dff83E8264EcF986CA
 CL_REGISTRY: constant(address) = 0x02777053d6764996e594c3E88AF1D58D5363a2e6
 CL_REGISTRAR: constant(address) = 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
 UNIV3_ROUTER: constant(address) = 0xE592427A0AEce92De3Edee1F18E0157C05861564
-
+FASTGAS_ORACLE: constant(address) =0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C
 
 # storage vars
 swarm: public(uint32[MAX_SWARM_SIZE])
@@ -85,7 +87,7 @@ def __init__():
     """
     if not self._enough_link():
         self._swap_link_in()
-    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", 1_000_000)
+    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", GAS_LIMIT)
 
     # add new upkeep id to swarm
     self.swarm[0] = upkeep_id
@@ -105,19 +107,19 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     old_nonce: uint32 = state.nonce
 
     # build registration payload and send to registrar via erc677
-    # payload: Bytes[388] = _abi_encode(
-    #     name,
-    #     empty(bytes32),
-    #     self,
-    #     gas_limit,
-    #     self,
-    #     empty(bytes32),
-    #     self._threshold(),
-    #     empty(uint256),
-    #     self,
-    #     method_id=0x3659d666  # method_id("register(String[64],bytes32,address,uint32,address,bytes32,uint96,uint8,address)")
-    # )
-    # IERC677(LINK).transferAndCall(CL_REGISTRAR, self._threshold(), empty(Bytes[388]))#payload)
+    payload: Bytes[388] = _abi_encode(
+        name,
+        empty(bytes32),
+        self,
+        gas_limit,
+        self,
+        empty(bytes32),
+        convert(LINK_THRESHOLD, uint256),#self._threshold(),
+        empty(uint256),
+        self,
+        method_id=0x3659d666  # method_id("register(String[64],bytes32,address,uint32,address,bytes32,uint96,uint8,address)")
+    )
+    IERC677(LINK).transferAndCall(CL_REGISTRAR, LINK_THRESHOLD, payload)
 
     # get new nonce from registry
     state = IAutomationRegistry(CL_REGISTRY).getState()[0]
@@ -144,21 +146,20 @@ def _enough_link() -> bool:
     """"
     Check if KeeperKeeper's $LINK's balance is above threshold
     """
-    if IERC677(LINK).balanceOf(self) >= 5 * 10 ** 18:  # self._threshold():
+    if IERC677(LINK).balanceOf(self) >= LINK_THRESHOLD:#self._link_threshold():
         return True
     return False
 
 
 @view
 @internal
-def _threshold() -> uint256:
+def _link_threshold() -> uint256:
     """
     Minimum amount of $LINK needed for a single swarm member
     """
     # TODO: calculate dynamically based on gas oracle
-    threshold: uint256 = 100 * 10 ** 18
-    hardcoded: uint256 = 5 * 10 ** 18
-    return max(threshold, hardcoded)
+    dynamic: uint256 = as_wei_value(100, "ether")
+    return max(dynamic, LINK_THRESHOLD)
 
 
 @payable
