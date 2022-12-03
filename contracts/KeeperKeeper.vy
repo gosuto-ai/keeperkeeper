@@ -96,11 +96,12 @@ LINKETH_ORACLE: constant(address) = 0xDC530D9457755926550b59e8ECcdaE7624181557
 
 
 # storage vars
-swarm: public(uint32[MAX_SWARM_SIZE])
-premium: public(uint32)
-gas_factor: public(uint16)
-max_gas: public(uint32)
-min_link: public(uint256)
+swarm: public(uint256[MAX_SWARM_SIZE])
+
+premium: uint32
+gas_factor: uint16  # TODO: needs to be implemented or removed
+max_gas: uint32
+min_link: uint256
 
 
 @payable
@@ -121,7 +122,7 @@ def _register_self():
             for having our performUpkeep called
     """
     # add upkeep entry in chainlink's registry and get id back
-    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
+    upkeep_id: uint256 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
 
     # add new upkeep id to our swarm
     self.swarm[0] = upkeep_id
@@ -160,7 +161,7 @@ def _refresh_registrar_config():
 
 
 @internal
-def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint32:
+def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint256:
     """
     @notice Register an upkeep on the automation registrar and predict its id
     @dev https://docs.chain.link/chainlink-automation/register-upkeep/
@@ -211,7 +212,7 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
             convert(old_nonce, bytes32)
         )
     )
-    upkeep_id: uint32 = convert(upkeep_hash, uint32)
+    upkeep_id: uint256 = convert(upkeep_hash, uint256)
 
     return upkeep_id
 
@@ -254,9 +255,6 @@ def _link_threshold(gas_per_upkeep: int256, n: int256 = 10) -> uint256:
 
     # assure upkeep can be performed n times
     link_threshold_in_wei *= n
-
-    # make sure int256 is positive
-    assert link_threshold_in_wei > 0
 
     # in either case make sure we use at least min_link as enforced by registrar
     return max(convert(link_threshold_in_wei, uint256), self.min_link)
