@@ -1,4 +1,4 @@
-# @version 0.3.7
+# @version 0.3.4
 """
 @title KeeperKeeper
 @author gosuto.eth
@@ -74,7 +74,7 @@ UNIV3_ROUTER: constant(address) = 0xE592427A0AEce92De3Edee1F18E0157C05861564
 
 
 # storage vars
-swarm: public(uint256[MAX_SWARM_SIZE])
+swarm: public(uint32[MAX_SWARM_SIZE])
 
 
 @payable
@@ -86,14 +86,14 @@ def __init__():
     # TODO: move registration outside of constructor if it cannot be payable
     if not self._enough_link():
         self._swap_link_in()
-    upkeep_id: uint256 = self._register_member(self, "KeeperKeeper", 1_000_000)
+    upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", 1_000_000)
 
     # add new upkeep id to swarm
     self.swarm[0] = upkeep_id
 
 
 @internal
-def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint256:
+def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint32:
     """
     @notice Register an upkeep on the automation registrar and predict its id
     @params member Address of the member to register in the swarm
@@ -102,8 +102,8 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     @dev https://docs.chain.link/chainlink-automation/register-upkeep/
     """
     # get old nonce from registry
-    state: State = IAutomationRegistry.getState()[0]
-    old_nonce: uint256 = 0#state.nonce
+    state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
+    old_nonce: uint32 = state.nonce
 
     # build registration payload and send to registrar via erc677
     payload: Bytes[388] = _abi_encode(
@@ -121,8 +121,8 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     ERC677(LINK).transferAndCall(CL_REGISTRAR, self._threshold(), payload)
 
     # get new nonce from registry
-    # state = IAutomationRegistry.getState()[0]
-    new_nonce: uint256 = 0#state.nonce
+    state = IAutomationRegistry(CL_REGISTRY).getState()[0]
+    new_nonce: uint32 = state.nonce
     if not new_nonce == old_nonce + 1:
         raise
 
@@ -130,11 +130,11 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     hash: bytes32 = keccak256(
         concat(
             blockhash(block.number - 1),
-            CL_REGISTRY,
-            convert(old_nonce, uint32)
+            convert(CL_REGISTRY, bytes32),
+            convert(old_nonce, bytes32)
         )
     )
-    upkeep_id: uint256 = convert(hash, uint256)
+    upkeep_id: uint32 = convert(hash, uint32)
 
     return upkeep_id
 
@@ -157,6 +157,7 @@ def _threshold() -> uint256:
     Minimum amount of $LINK needed for a single swarm member
     """
     # TODO: calculate dynamically based on gas oracle
+    # TODO: add min threshold of 5 $LINK
     return 100 * 10 ** 18
 
 
