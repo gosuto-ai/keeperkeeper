@@ -13,7 +13,7 @@
 
 # external interfaces
 interface IERC677:
-    # TODO: ref
+    # https://github.com/ethereum/EIPs/issues/677
     def balanceOf(_owner: address) -> uint256: view
     def transferAndCall(
         _to: address, _value: uint256, _data: Bytes[388]
@@ -41,7 +41,7 @@ interface IKeeperRegistrar:
     ): view
 
 interface IEACAggregatorProxy:
-    # TODO: ref
+    # @chainlink/v0.6/EACAggregatorProxy.sol
     def latestRoundData() -> (uint80, int256, uint256, uint256, uint80): view
 
 
@@ -107,7 +107,8 @@ min_link: public(uint256)
 @external
 def __init__():
     """
-    @notice Contract constructor
+    @notice Populate storage with relevant variables from registry and
+            registrar's configs
     """
     self._refresh_registry_config_and_get_nonce()
     self._refresh_registrar_config()
@@ -115,11 +116,11 @@ def __init__():
 
 @internal
 def _register_self():
-    # buy more $link if there is not enough for initial funding of the upkeep
-    if not self._enough_link():
-        self._swap_link_in()
-
-    # add upkeep entry in chainlink's registry
+    """
+    @notice Register self as the first member of the swarm; we depend on it
+            for having our performUpkeep called
+    """
+    # add upkeep entry in chainlink's registry and get id back
     upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
 
     # add new upkeep id to our swarm
@@ -128,6 +129,11 @@ def _register_self():
 
 @internal
 def _refresh_registry_config_and_get_nonce() -> uint32:
+    """
+    @notice Retrieve current state of the registry and save its relevant
+            variables to storage
+    @return The registry's current nonce
+    """
     state: State = empty(State)
     config: Config = empty(Config)
     _a: address[1] = empty(address[1])
@@ -142,6 +148,11 @@ def _refresh_registry_config_and_get_nonce() -> uint32:
 
 @internal
 def _refresh_registrar_config():
+    """
+    @notice Get minimum amount of $LINK registrar requires in order to
+            register an upkeep. Save value to storage
+    @dev See variable minLINKJuels in @chainlink/v0.8/KeeperRegistrar.sol
+    """
     self.min_link = IKeeperRegistrar(
         0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
     ).getRegistrationConfig()[4]
@@ -158,6 +169,10 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     @param gas_limit Max gas that the member's performUpkeep will need
     @return The id of the newly registered upkeep
     """
+    # buy more $link if there is not enough for initial funding of the upkeep
+    if not self._enough_link(convert(gas_limit, int256)):
+        self._swap_link_in()
+
     # get old nonce from registry to compare against new nonce later
     state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
     old_nonce: uint32 = state.nonce
@@ -203,11 +218,14 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
 
 @view
 @internal
-def _enough_link() -> bool:
+def _enough_link(gas_per_upkeep: int256) -> bool:
     """"
-    Check if KeeperKeeper's $LINK's balance is above threshold
+    @notice Check if KeeperKeeper's $LINK's balance is high enough to register
+            an upkeep with given gas value
+    @param gas_per_upkeep Amount of gas a single call to performUpkeep costs
+    @return True if there is enough balance, False if not
     """
-    if IERC677(LINK).balanceOf(self) >= self._link_threshold(convert(SELF_UPKEEP_GAS, int256)):
+    if IERC677(LINK).balanceOf(self) >= self._link_threshold(gas_per_upkeep):
         return True
     return False
 
@@ -248,7 +266,7 @@ def _link_threshold(gas_per_upkeep: int256, n: int256 = 10) -> uint256:
 @internal
 def _swap_link_in():
     """
-    Swap ether for $LINK
+    @notice Swap ether for $LINK
     """
     pass
 
@@ -256,7 +274,7 @@ def _swap_link_in():
 @internal
 def _swap_link_out():
     """
-    Swap $LINK for ether
+    @notice Swap $LINK for ether
     """
     pass
 
@@ -264,7 +282,7 @@ def _swap_link_out():
 @external
 def check_upkeep():
     """
-    Loop over every member in the swarm and make sure their upkeeper's $LINK
-    balance is sufficient
+    @notice Loop over every member in the swarm and make sure their upkeeper's
+            $LINK balance is sufficient
     """
     pass
