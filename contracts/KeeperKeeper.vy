@@ -1,4 +1,4 @@
-# @version 0.3.4
+# @version 0.3.7
 """
 @title KeeperKeeper
 @author gosuto.eth
@@ -12,7 +12,7 @@
 
 
 # external interfaces
-interface ERC677:
+interface IERC677:
     def balanceOf(_owner: address) -> uint256: view
     def transferAndCall(_to: address, _value: uint256, _data: Bytes[388]) -> bool: nonpayable
 
@@ -83,7 +83,6 @@ def __init__():
     """
     @notice Contract constructor
     """
-    # TODO: move registration outside of constructor if it cannot be payable
     if not self._enough_link():
         self._swap_link_in()
     upkeep_id: uint32 = self._register_member(self, "KeeperKeeper", 1_000_000)
@@ -106,19 +105,19 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     old_nonce: uint32 = state.nonce
 
     # build registration payload and send to registrar via erc677
-    payload: Bytes[388] = _abi_encode(
-        name,  # name
-        empty(bytes32),  # encryptedEmail
-        self,  # upkeepContract
-        gas_limit,  # gasLimit
-        self,  # adminAddress
-        empty(bytes32),  # checkData
-        self._threshold(),  # amount
-        empty(uint256),  # source
-        self, # sender
-        method_id=method_id("register(String[64],bytes32,address,uint32,address,bytes32,uint96,uint8,address)")
-    )
-    ERC677(LINK).transferAndCall(CL_REGISTRAR, self._threshold(), payload)
+    # payload: Bytes[388] = _abi_encode(
+    #     name,
+    #     empty(bytes32),
+    #     self,
+    #     gas_limit,
+    #     self,
+    #     empty(bytes32),
+    #     self._threshold(),
+    #     empty(uint256),
+    #     self,
+    #     method_id=0x3659d666  # method_id("register(String[64],bytes32,address,uint32,address,bytes32,uint96,uint8,address)")
+    # )
+    # IERC677(LINK).transferAndCall(CL_REGISTRAR, self._threshold(), empty(Bytes[388]))#payload)
 
     # get new nonce from registry
     state = IAutomationRegistry(CL_REGISTRY).getState()[0]
@@ -127,14 +126,14 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
         raise
 
     # predict upkeep id
-    hash: bytes32 = keccak256(
+    upkeep_hash: bytes32 = keccak256(
         concat(
             blockhash(block.number - 1),
             convert(CL_REGISTRY, bytes32),
             convert(old_nonce, bytes32)
         )
     )
-    upkeep_id: uint32 = convert(hash, uint32)
+    upkeep_id: uint32 = convert(upkeep_hash, uint32)
 
     return upkeep_id
 
@@ -145,7 +144,7 @@ def _enough_link() -> bool:
     """"
     Check if KeeperKeeper's $LINK's balance is above threshold
     """
-    if ERC677(LINK).balanceOf(self) >= self._threshold():
+    if IERC677(LINK).balanceOf(self) >= 5 * 10 ** 18:  # self._threshold():
         return True
     return False
 
@@ -157,8 +156,9 @@ def _threshold() -> uint256:
     Minimum amount of $LINK needed for a single swarm member
     """
     # TODO: calculate dynamically based on gas oracle
-    # TODO: add min threshold of 5 $LINK
-    return 100 * 10 ** 18
+    threshold: uint256 = 100 * 10 ** 18
+    hardcoded: uint256 = 5 * 10 ** 18
+    return max(threshold, hardcoded)
 
 
 @payable
