@@ -279,6 +279,16 @@ def _link_threshold(gas_per_upkeep: int256, n: int256 = 10) -> uint256:
 
 
 @payable
+@external
+def swap_link_in(mantissa: uint256):
+    """
+    @notice Allow any external actor to provide ether for buying $LINK
+    @param mantissa Amount of $LINK tokens to buy
+    """
+    self._swap_link_in(mantissa)
+
+
+@payable
 @internal
 def _swap_link_in(mantissa: uint256):
     """
