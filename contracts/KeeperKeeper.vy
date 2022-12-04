@@ -2,10 +2,10 @@
 """
 @title KeeperKeeper
 @author gosuto.eth
-@license GPL
+@license GPL-3.0-only
 @notice Register Chainlink upkeeps for a swarm of smart contracts and
         automatically maintain the $LINK balance for each individual member
-@dev WIP, not deployed yet!
+@dev WIP: contract can deploy and register itself
 """
 
 
