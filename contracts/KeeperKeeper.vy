@@ -43,12 +43,20 @@ interface IEACAggregatorProxy:
     def latestRoundData() -> (uint80, int256, uint256, uint256, uint80): view
 
 interface IUniswapV2Router02:
+    # @uniswap-v2-periphery/UniswapV2Router02.sol
     def swapETHForExactTokens(
         amountOut: uint256,
         path: DynArray[address, 2],
         to: address,
         deadline: uint256
     ) -> DynArray[uint256, 2]: payable
+    def swapExactTokensForETH(
+        amountIn: uint256,
+        amountOutMin: uint256,
+        path: DynArray[address, 2],
+        to: address,
+        deadline: uint256
+    ) -> DynArray[uint256, 2]: view
 
 
 # structs
@@ -104,6 +112,7 @@ LINKETH_ORACLE: constant(address) = 0xDC530D9457755926550b59e8ECcdaE7624181557
 
 
 # storage vars
+owner: public(address)
 swarm: public(uint256[MAX_SWARM_SIZE])
 
 premium: uint32
@@ -117,6 +126,7 @@ def __init__():
     """
     @notice Populate storage with relevant config variables from the registrar
     """
+    self.owner = msg.sender
     self._refresh_registrar_config()
 
 
@@ -282,11 +292,16 @@ def _swap_link_in(mantissa: uint256):
 
 
 @internal
-def _swap_link_out():
+def _swap_link_out(mantissa: uint256):
     """
-    @notice Swap $LINK for ether
+    @notice Swap a specific amount of $LINK for ether
+    @param mantissa Number of $LINK tokens to sell
     """
-    pass
+    amount_out_min: uint256 = 0  # TODO
+    deadline: uint256 = block.timestamp + 180 * 60
+    IUniswapV2Router02(UNIV2_ROUTER).swapExactTokensForETH(
+        mantissa, amount_out_min, [LINK, WETH], self, deadline
+    )
 
 
 @view
