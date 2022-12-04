@@ -7,9 +7,14 @@ def test_deployed(kk):
     assert to_address(addr) == addr
 
 
-def test_initialise_swarm(dev, kk):
+def test_owner(deployer, kk):
+    # the deployer should be owner
+    assert kk.owner() == deployer
+
+
+def test_initialise_swarm(deployer, kk):
     # send 10 ether to enable buying $link needed for upkeep
-    kk.initialise({"from": dev, "value": 10e18})
+    kk.initialise({"from": deployer, "value": 10e18})
 
 
 def test_has_ether(kk):
