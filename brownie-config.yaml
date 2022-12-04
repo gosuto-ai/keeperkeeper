@@ -4,15 +4,3 @@ networks:
   default: mainnet-fork
 
 dotenv: .env
-
-dependencies:
-    - Uniswap/v3-core@1.0.0
-    - Uniswap/v3-periphery@1.3.0
-    - OpenZeppelin/openzeppelin-contracts@4.8.0
-
-compiler:
-    solc:
-        remappings:
-          - "@uniswap/v3-core=Uniswap/v3-core@1.0.0"
-          - "@uniswap/v3-periphery=Uniswap/v3-periphery@1.3.0"
-          - "@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.8.0"
