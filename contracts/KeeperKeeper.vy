@@ -8,8 +8,6 @@
 @dev WIP, not deployed yet!
 """
 
-# from interfaces import ISwapRouter
-
 
 # external interfaces
 interface IERC677:
@@ -43,6 +41,14 @@ interface IKeeperRegistrar:
 interface IEACAggregatorProxy:
     # @chainlink/v0.6/EACAggregatorProxy.sol
     def latestRoundData() -> (uint80, int256, uint256, uint256, uint80): view
+
+interface IUniswapV2Router02:
+    def swapETHForExactTokens(
+        amountOut: uint256,
+        path: DynArray[address, 2],
+        to: address,
+        deadline: uint256
+    ) -> DynArray[uint256, 2]: payable
 
 
 # structs
@@ -85,11 +91,13 @@ event LinkSwappedOut:
 # constants
 MAX_BPS: constant(uint256) = 1_000_000_000
 MAX_SWARM_SIZE: constant(uint8) = 16
-SELF_UPKEEP_GAS: constant(uint32) = 1_000_000  # TODO: replace, still an estimation
+SELF_UPKEEP_GAS: constant(int256) = 1_000_000  # TODO: replace, still an estimation
 
 LINK: constant(address) = 0x514910771AF9Ca656af840dff83E8264EcF986CA
+WETH: constant(address) = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 CL_REGISTRY: constant(address) = 0x02777053d6764996e594c3E88AF1D58D5363a2e6
 CL_REGISTRAR: constant(address) = 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+UNIV2_ROUTER: constant(address) = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
 UNIV3_ROUTER: constant(address) = 0xE592427A0AEce92De3Edee1F18E0157C05861564
 FASTGAS_ORACLE: constant(address) = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C
 LINKETH_ORACLE: constant(address) = 0xDC530D9457755926550b59e8ECcdaE7624181557
@@ -104,27 +112,28 @@ max_gas: uint32
 min_link: uint256
 
 
-@payable
 @external
 def __init__():
     """
-    @notice Populate storage with relevant variables from registry and
-            registrar's configs
+    @notice Populate storage with relevant config variables from the registrar
     """
-    self._refresh_registry_config_and_get_nonce()
     self._refresh_registrar_config()
 
 
-@internal
-def _register_self():
+@payable
+@external
+def initialise():
     """
-    @notice Register self as the first member of the swarm; we depend on it
-            for having our performUpkeep called
+    @notice Register self as the first member of the swarm so that our
+            performUpkeep is automatically called by a Chainlink keeper
     """
+    # can only be called if swarm is not initialised yet
+    assert self.swarm[0] == 0
+
     # add upkeep entry in chainlink's registry and get id back
     upkeep_id: uint256 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
 
-    # add new upkeep id to our swarm
+    # add new upkeep id to the swarm
     self.swarm[0] = upkeep_id
 
 
@@ -159,9 +168,8 @@ def _refresh_registrar_config():
     ).getRegistrationConfig()[4]
 
 
-
 @internal
-def _register_member(member: address, name: String[64], gas_limit: uint32) -> uint256:
+def _register_member(member: address, name: String[64], gas_limit: int256) -> uint256:
     """
     @notice Register an upkeep on the automation registrar and predict its id
     @dev https://docs.chain.link/chainlink-automation/register-upkeep/
@@ -170,26 +178,26 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     @param gas_limit Max gas that the member's performUpkeep will need
     @return The id of the newly registered upkeep
     """
-    # buy more $link if there is not enough for initial funding of the upkeep
-    if not self._enough_link(convert(gas_limit, int256)):
-        self._swap_link_in()
+    # calc amount of $link needed for initial funding of the upkeep
+    link_threshold: uint256 = self._link_threshold(gas_limit)
+
+    # buy more $link if there is not enough to fund the upkeep
+    if not self._enough_link(gas_limit):
+        self._swap_link_in(link_threshold)
 
     # get old nonce from registry to compare against new nonce later
-    state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
-    old_nonce: uint32 = state.nonce
+    # get the registry's config and save to storage
+    old_nonce: uint32 = self._refresh_registry_config_and_get_nonce()
 
     # confirm gas costs for member's performUpkeep are not too high
-    assert gas_limit <= self.max_gas
-
-    # calc amount of $link needed to fund upkeep
-    link_threshold: uint256 = self._link_threshold(convert(gas_limit, int256))
+    assert gas_limit <= convert(self.max_gas, int256)
 
     # build registration payload and send to registrar via erc677
     payload: Bytes[388] = _abi_encode(
         name,
         empty(bytes32),
         self,
-        gas_limit,
+        convert(gas_limit, uint32),
         self,
         empty(bytes32),
         link_threshold,
@@ -199,10 +207,10 @@ def _register_member(member: address, name: String[64], gas_limit: uint32) -> ui
     )
     IERC677(LINK).transferAndCall(CL_REGISTRAR, link_threshold, payload)
 
-    # get new nonce from registry and refresh its config in our storage
-    new_nonce: uint32 = self._refresh_registry_config_and_get_nonce()
-    if not new_nonce == old_nonce + 1:
-        raise  # upkeep was not successfully registered!
+    # get new nonce from registry
+    state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
+    new_nonce: uint32 = state.nonce
+    assert new_nonce == old_nonce + 1  # upkeep was not successfully registered!
 
     # predict upkeep id
     upkeep_hash: bytes32 = keccak256(
@@ -256,17 +264,21 @@ def _link_threshold(gas_per_upkeep: int256, n: int256 = 10) -> uint256:
     # assure upkeep can be performed n times
     link_threshold_in_wei *= n
 
-    # in either case make sure we use at least min_link as enforced by registrar
+    # either way make sure we use at least min_link as enforced by registrar
     return max(convert(link_threshold_in_wei, uint256), self.min_link)
 
 
 @payable
 @internal
-def _swap_link_in():
+def _swap_link_in(mantissa: uint256):
     """
-    @notice Swap ether for $LINK
+    @notice Swap ether for a specific amount of $LINK
+    @param mantissa Number of $LINK tokens required
     """
-    pass
+    deadline: uint256 = block.timestamp + 180 * 60
+    IUniswapV2Router02(UNIV2_ROUTER).swapETHForExactTokens(
+        mantissa, [WETH, LINK], self, deadline, value=msg.value
+    )
 
 
 @internal
@@ -277,10 +289,22 @@ def _swap_link_out():
     pass
 
 
+@view
 @external
-def check_upkeep():
+def checkUpkeep() -> bool:
     """
     @notice Loop over every member in the swarm and make sure their upkeeper's
             $LINK balance is sufficient
+    """
+    return False
+
+
+@payable
+@external
+def __default__():
+    """
+    @notice Assure we are able to receive ether, for example sent back by the
+            Uniswap router
+    @dev https://vyper.readthedocs.io/en/stable/control-structures.html#the-default-function
     """
     pass
