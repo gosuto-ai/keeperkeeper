@@ -41,15 +41,15 @@ def test_swap_link_in_not_funded(deployer, kk):
 def test_swap_link_out_from_owner(owner, link, kk):
     balance_ether = kk.balance()
     balance_link = link.balanceOf(kk)
-    assert balance_link >= 10e18
+    assert balance_link >= 1e18
 
-    kk.swap_link_out(10e18, {"from": owner})
+    kk.swap_link_out(1e18, {"from": owner})
 
     # confirm ether was acquired
     assert kk.balance() > balance_ether
 
     # confirm $link tokens were divested
-    assert link.balanceOf(kk) == balance_link - 10e18
+    assert link.balanceOf(kk) == balance_link - 1e18
 
 
 def test_swap_link_out_from_random_eoa(random_eoa, kk):
