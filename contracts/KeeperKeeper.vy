@@ -138,7 +138,7 @@ def initialise():
             performUpkeep is automatically called by a Chainlink keeper
     """
     # can only be called if swarm is not initialised yet
-    assert self.swarm[0] == 0
+    assert self.swarm[0] == 0  # dev: swarm already initialised
 
     # add upkeep entry in chainlink's registry and get id back
     upkeep_id: uint256 = self._register_member(self, "KeeperKeeper", SELF_UPKEEP_GAS)
@@ -200,7 +200,7 @@ def _register_member(member: address, name: String[64], gas_limit: int256) -> ui
     old_nonce: uint32 = self._refresh_registry_config_and_get_nonce()
 
     # confirm gas costs for member's performUpkeep are not too high
-    assert gas_limit <= convert(self.max_gas, int256)
+    assert gas_limit <= convert(self.max_gas, int256)  # dev: gas_limit too high
 
     # build registration payload and send to registrar via erc677
     payload: Bytes[388] = _abi_encode(
@@ -220,7 +220,7 @@ def _register_member(member: address, name: String[64], gas_limit: int256) -> ui
     # get new nonce from registry
     state: State = IAutomationRegistry(CL_REGISTRY).getState()[0]
     new_nonce: uint32 = state.nonce
-    assert new_nonce == old_nonce + 1  # upkeep was not successfully registered!
+    assert new_nonce == old_nonce + 1  # dev: upkeep was not successfully registered!
 
     # predict upkeep id
     upkeep_hash: bytes32 = keccak256(
