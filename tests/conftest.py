@@ -9,7 +9,7 @@ def deployer():
 
 @pytest.fixture(scope="session")
 def kk(deployer):
-    return KeeperKeeper.deploy({"from": deployer})
+    return KeeperKeeper.deploy(deployer, {"from": deployer})
 
 
 @pytest.fixture(scope="session")

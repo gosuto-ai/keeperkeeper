@@ -122,11 +122,11 @@ min_link: uint256
 
 
 @external
-def __init__():
+def __init__(_owner: address):
     """
     @notice Populate storage with relevant config variables from the registrar
     """
-    self.owner = msg.sender
+    self.owner = _owner
     self._refresh_registrar_config()
 
 
