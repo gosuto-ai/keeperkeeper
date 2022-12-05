@@ -10,8 +10,15 @@
 
 
 # external interfaces
+interface IWETH9:
+    # def balanceOf(guy: address) -> uint256: view
+    # def deposit(): payable
+    def withdraw(wad: uint256): nonpayable
+
 interface IERC677:
     # https://github.com/ethereum/EIPs/issues/677
+    def allowance(_owner: address, _spender: address) -> uint256: view
+    def approve(_spender: address, _value: uint256) -> bool: nonpayable
     def balanceOf(_owner: address) -> uint256: view
     def transferAndCall(
         _to: address, _value: uint256, _data: Bytes[388]
@@ -58,6 +65,12 @@ interface IUniswapV2Router02:
         deadline: uint256
     ) -> DynArray[uint256, 2]: view
 
+interface ISwapRouter:
+    # @uniswap-v3-periphery/SwapRouter.sol
+    def exactInputSingle(params: ExactInputSingleParams) -> uint256: payable
+    def exactOutputSingle(params: ExactOutputSingleParams) -> uint256: payable
+    def refundETH(): nonpayable
+
 
 # structs
 struct Config:  # IAutomationRegistry
@@ -79,6 +92,26 @@ struct State:  # IAutomationRegistry
     ownerLinkBalance: uint96
     expectedLinkBalance: uint256
     numUpkeeps: uint256
+
+struct ExactInputSingleParams:  # ISwapRouter
+    tokenIn: address
+    tokenOut: address
+    fee: uint24
+    recipient: address
+    deadline: uint256
+    amountIn: uint256
+    amountOutMinimum: uint256
+    sqrtPriceLimitX96: uint160
+
+struct ExactOutputSingleParams:  # ISwapRouter
+    tokenIn: address
+    tokenOut: address
+    fee: uint24
+    recipient: address
+    deadline: uint256
+    amountOut: uint256
+    amountInMaximum: uint256
+    sqrtPriceLimitX96: uint160
 
 
 # enums
@@ -105,7 +138,6 @@ LINK: constant(address) = 0x514910771AF9Ca656af840dff83E8264EcF986CA
 WETH: constant(address) = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 CL_REGISTRY: constant(address) = 0x02777053d6764996e594c3E88AF1D58D5363a2e6
 CL_REGISTRAR: constant(address) = 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
-UNIV2_ROUTER: constant(address) = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
 UNIV3_ROUTER: constant(address) = 0xE592427A0AEce92De3Edee1F18E0157C05861564
 FASTGAS_ORACLE: constant(address) = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C
 LINKETH_ORACLE: constant(address) = 0xDC530D9457755926550b59e8ECcdaE7624181557
@@ -293,25 +325,55 @@ def swap_link_in(mantissa: uint256):
 def _swap_link_in(mantissa: uint256):
     """
     @notice Swap ether for a specific amount of $LINK
-    @param mantissa Number of $LINK tokens required
+    @param mantissa Amount of $LINK tokens required
     """
-    deadline: uint256 = block.timestamp + 180 * 60
-    IUniswapV2Router02(UNIV2_ROUTER).swapETHForExactTokens(
-        mantissa, [WETH, LINK], self, deadline, value=msg.value
+    ISwapRouter(UNIV3_ROUTER).exactOutputSingle(
+        ExactOutputSingleParams({
+            tokenIn: WETH,
+            tokenOut: LINK,
+            fee: convert(3000, uint24),
+            recipient: self,
+            deadline: block.timestamp + 180 * 60,
+            amountOut: mantissa,
+            amountInMaximum: msg.value,
+            sqrtPriceLimitX96: empty(uint160)
+        }),
+        value=msg.value
     )
+    ISwapRouter(UNIV3_ROUTER).refundETH()
+
+
+@external
+def swap_link_out(mantissa: uint256):
+    """
+    @notice Allow owner to sell specific amount of $LINK being held
+    @param mantissa Amount of $LINK tokens to sell
+    """
+    assert msg.sender == self.owner  # dev: can only be called by owner
+    self._swap_link_out(mantissa)
 
 
 @internal
 def _swap_link_out(mantissa: uint256):
     """
     @notice Swap a specific amount of $LINK for ether
-    @param mantissa Number of $LINK tokens to sell
+    @param mantissa Amount of $LINK tokens to sell
     """
     amount_out_min: uint256 = 0  # TODO
-    deadline: uint256 = block.timestamp + 180 * 60
-    IUniswapV2Router02(UNIV2_ROUTER).swapExactTokensForETH(
-        mantissa, amount_out_min, [LINK, WETH], self, deadline
+    IERC677(LINK).approve(UNIV3_ROUTER, mantissa)
+    result: uint256 = ISwapRouter(UNIV3_ROUTER).exactInputSingle(
+        ExactInputSingleParams({
+            tokenIn: LINK,
+            tokenOut: WETH,
+            fee: convert(3000, uint24),
+            recipient: self,
+            deadline: block.timestamp + 180 * 60,
+            amountIn: mantissa,
+            amountOutMinimum: amount_out_min,
+            sqrtPriceLimitX96: empty(uint160)
+        })
     )
+    IWETH9(WETH).withdraw(result)
 
 
 @view
