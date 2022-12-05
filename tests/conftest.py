@@ -8,6 +8,11 @@ def deployer():
 
 
 @pytest.fixture(scope="session")
+def owner(deployer):
+    return deployer
+
+
+@pytest.fixture(scope="session")
 def kk(deployer):
     return KeeperKeeper.deploy(deployer, {"from": deployer})
 
