@@ -1,0 +1,4 @@
+eth-brownie==1.19.2
+vyper==0.3.7
+pytest==6.2.5
+black==22.10.0
