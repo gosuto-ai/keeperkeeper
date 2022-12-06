@@ -16,5 +16,5 @@ jobs:
     - run: pip install -r requirements.txt
     - run: black . --check --diff
     - run: echo '${{ secrets.DOTENV_FILE }}' > .env
-    - run: npm install ganache-cli@6.12.2
+    - run: npm install ganache-cli@6.12.2 -g
     - run: brownie test
