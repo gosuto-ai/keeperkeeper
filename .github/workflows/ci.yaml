@@ -20,6 +20,7 @@ jobs:
     - run: pip install -r requirements.txt
     - run: black . --check --diff
     - run: echo '${{ secrets.DOTENV_FILE }}' > .env
+    - run: echo '::add-mask::${{ secrets.ALCHEMY_URL }}'
     - run: npm install ganache-cli@6.12.2 -g
     - run: brownie networks update_provider alchemy https://eth-{}.g.alchemy.com/v2/$ALCHEMYAPI_TOKEN
     - run: brownie networks modify mainnet name="Mainnet (Alchemy)"
