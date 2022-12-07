@@ -210,6 +210,19 @@ def _refresh_registrar_config():
     ).getRegistrationConfig()[4]
 
 
+@payable
+@external
+def register_member(member: address, name: String[64], gas_limit: int256) -> uint256:
+    """
+    @notice Allow owner to register a new member to the swarm
+    @param member Address of the member to register in the swarm
+    @param name Name of the upkeep
+    @param gas_limit Max gas that the member's performUpkeep will need
+    """
+    assert msg.sender == self.owner  # dev: can only be called by owner
+    return self._register_member(member, name, gas_limit)
+
+
 @internal
 def _register_member(member: address, name: String[64], gas_limit: int256) -> uint256:
     """
